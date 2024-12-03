@@ -4,192 +4,182 @@
 #include <pthread.h>
 
 
-#define NUM_THREADS 4
-#define BUFFER_SIZE 10
+#define BUFFER_SIZE 50
+#define INPUT_LENGTH 1000
+#define OUTPUT_LENGTH 80
 
-pthread_mutex_t mutex = PTHREAD_MUTEX_INITIALIZER;
 
-typedef struct {
-    char data[BUFFER_SIZE][1000];
-    int head;
-    int tail;
-    int count;
-    pthread_mutex_t mutex;
-    pthread_cond_t not_empty;
-    pthread_cond_t not_full;
-} Buffer;
+//initialize buffer 1
+char buffer_1[BUFFER_SIZE][INPUT_LENGTH];
+int count_1 = 0;
+int prod_idx_1 = 0;
+int cond_idx_1 = 0;
+pthread_mutex_t mutex_1 = PTHREAD_MUTEX_INITIALIZER;
+pthread_cond_t full_1 = PTHREAD_COND_INITIALIZER;
 
-void *dummy_consumer(void *arg) {
-    Buffer *buffer = (Buffer *)arg;
-    char line[1000];
 
-    while (1) {
+//initialize buffer 2
+char buffer_2[BUFFER_SIZE][INPUT_LENGTH];
+int count_2 = 0;
+int prod_idx_2 = 0;
+int cond_idx_2 = 0;
+pthread_mutex_t mutex_2 = PTHREAD_MUTEX_INITIALIZER;
+pthread_cond_t full_2 = PTHREAD_COND_INITIALIZER;
 
-        // Check for the stop marker
-        if (consume_input_buffer(buffer, line)) {
-            break;
-        }
 
-        printf("Processed Line: %s\n", line);
-    }
+//intialize buffer 3
+char buffer_3[BUFFER_SIZE][INPUT_LENGTH];
+int count_3 = 0;
+int prod_idx_3 = 0;
+int cond_idx_3 = 0;
+pthread_mutex_t mutex_3 = PTHREAD_MUTEX_INITIALIZER;
+pthread_cond_t full_3 = PTHREAD_COND_INITIALIZER;
 
-    return NULL;
+
+/**
+ * Same for the rest of put_buffers.
+ */
+void put_buff_1(char *line){ 
+    pthread_mutex_lock(&mutex_1); // Lock the mutex to ensure thread safety
+    strcpy(buffer_1[prod_idx_1], line);
+    prod_idx_1 = (prod_idx_1 + 1) % BUFFER_SIZE; // Update production index, wrapping around at BUFFER_SIZE
+    count_1++;  // Increment count of items in buffer_1
+    pthread_cond_signal(&full_1); // Signal that data is available in the buffer
+    pthread_mutex_unlock(&mutex_1); // Unlock the mutex
 }
 
 
-void buffer_init(Buffer *buffer) {
-    buffer->head = 0;
-    buffer->tail = 0;
-    buffer->count = 0;
-    pthread_mutex_init(&buffer->mutex, NULL);
-    pthread_cond_init(&buffer->not_empty, NULL);
-    pthread_cond_init(&buffer->not_full, NULL);
-}
 
-
-// void *input_thread(void *arg){
-//     Buffer *buffer = (Buffer *)arg;
-//     char line[1000];
-    
-
-//     while(fgets(line, sizeof(line), stdin) != NULL){
-
-//         if(strcmp(line, "STOP\n") == 0){
-//             break;
-//         }
-
-
-//         pthread_mutex_lock(&buffer->mutex);
-
-//         //wait if the buffer is full
-//         while(buffer->count == BUFFER_SIZE){
-//             pthread_cond_wait(&buffer->not_full, &buffer->mutex);
-//         }
-
-//         //copy the line into buffer
-//         strcpy(buffer->data[buffer->head], line);
-//         buffer->head = (buffer->head + 1) % BUFFER_SIZE;
-//         buffer->count++;
-
-//         pthread_cond_signal(&buffer->not_empty);
-//         pthread_mutex_unlock(&buffer->mutex);
-//     }
-
-//     pthread_mutex_lock(&buffer->mutex);
-//     while(buffer->count == BUFFER_SIZE){
-//         pthread_cond_wait(&buffer->not_full, &buffer->mutex);
-//     }
-//     strcpy(buffer->data[buffer->head], "STOP");
-//     buffer->head = (buffer->head + 1) % BUFFER_SIZE;
-//     buffer->count++;
-//     pthread_cond_signal(&buffer->not_empty);
-//     pthread_mutex_unlock(&buffer->mutex);
-
-//     return NULL;
-// }
-
-int consume_input_buffer(Buffer *buffer, char *line){
-    pthread_mutex_lock(&buffer->mutex);
-    while (buffer->count == 0) {
-        pthread_cond_wait(&buffer->not_empty, &buffer->mutex);
-    }
-    strcpy(line, buffer->data[buffer->tail]);
-    buffer->tail = (buffer->tail + 1) % BUFFER_SIZE;
-    buffer->count--;
-    pthread_cond_signal(&buffer->not_full);
-    pthread_mutex_unlock(&buffer->mutex);
-
-    // Return 1 if the line is "STOP", otherwise 0
-    return strcmp(line, "STOP") == 0;
-}
-
-void produce_output_buffer(Buffer *buffer, const char *line){
-    pthread_mutex_lock(&buffer->mutex);
-    while (buffer->count == BUFFER_SIZE) {
-        pthread_cond_wait(&buffer->not_full, &buffer->mutex);
-    }
-    strcpy(buffer->data[buffer->head], line);
-    buffer->head = (buffer->head + 1) % BUFFER_SIZE;
-    buffer->count++;
-    pthread_cond_signal(&buffer->not_empty);
-    pthread_mutex_unlock(&buffer->mutex);
-}
-
+/******************************
+ * THREAD 1:
+ * Gets the input from the user or from text file
+ * Reads and puts it into buffer
+ ******************************/
 void *input_thread(void *arg) {
-    Buffer *buffer = (Buffer *)arg;
-    char line[1000];
+    char line[INPUT_LENGTH];
 
-    while (1) {
-        printf("Enter a line (type STOP to finish): ");
-        fgets(line, sizeof(line), stdin);
 
-        // Remove trailing newline if present
-        line[strcspn(line, "\n")] = '\0';
-
-        produce_line(buffer, line);
-
-        if (strcmp(line, "STOP") == 0) {
+    while(fgets(line, sizeof(line), stdin)){
+        if (strncmp(line, "STOP\n", 5) == 0){
             break;
         }
+        put_buff_1(line);
     }
+    put_buff_1("STOP\n");
 
     return NULL;
+} 
+
+
+
+/*************************************** 
+ * THREAD 2:
+ * Gets the data from buffer 1, while putting buffer 2 into use
+ * 
+ * Replaces the new lines in the input with spaces
+*****************************************/
+
+
+/**
+ * Same for the rest of get_buffers.
+ */
+char *get_buff_1(){
+    pthread_mutex_lock(&mutex_1); // Lock mutex to ensure thread safety
+    while(count_1 == 0){ // If buffer_1 is empty, wait for data to be available
+        pthread_cond_wait(&full_1, &mutex_1);
+    }
+
+    char *line = buffer_1[cond_idx_1]; // Get the line from buffer_1 at the current condition index
+    cond_idx_1 = (cond_idx_1 + 1) % BUFFER_SIZE; // Update the condition index, wrapping around at BUFFER_SIZE
+    count_1--; // Decrement the count of items in buffer_1
+    pthread_mutex_unlock(&mutex_1); // Unlock the mutex
+    return line;
 }
 
 
+void put_buff_2(char *line){
+    pthread_mutex_lock(&mutex_2);
+    strcpy(buffer_2[prod_idx_2], line);
+    prod_idx_2 = (prod_idx_2 + 1) % BUFFER_SIZE;
+    count_2++;
+    pthread_cond_signal(&full_2);
+    pthread_mutex_unlock(&mutex_2);
+}
 
-void *line_seperator_thread(void *arg){
-    Buffer *input_buffer = ((Buffer **)arg)[0];
-    Buffer *output_buffer = ((Buffer **)arg)[1];
-    char line[1000];
 
-    while(1){
+void *line_seperator_thread(void *arg) {
 
-        if(consume_input_buffer(input_buffer, line)){
-
-            produce_output_buffer(output_buffer, "STOP");
-            breadk;
+    while (1) {
+        char *line = get_buff_1();
+        if(strncmp(line, "STOP\n", 5) == 0){
+            put_buff_2("STOP\n");
+            break;
         }
-
-        for(int i = 0; line[i] != '\0'; i++){
-            if(line[i] == '\n'){
+        // Replace newlines with spaces
+        for (int i = 0; line[i]; i++) {
+            if (line[i] == '\n') {
                 line[i] = ' ';
             }
         }
-
-        produce_output_buffer(output_buffer, line);
+        put_buff_2(line);
     }
-
     return NULL;
 }
 
 
-void *plus_sign_thread(void *arg){
-    Buffer *input_buffer = ((Buffer **)arg)[0];
-    Buffer *output_buffer = ((Buffer **)arg)[1];
-    char line[1000];
-    char processed_line[1000];
-    int j = 0;
 
-    while(1){
-       if(consume_input_buffer(input_buffer, line)){
 
-            produce_output_buffer(output_buffer, "STOP");
-            breadk;
+/**************************************
+ * THREAD 3:
+ * Uses data in buffer 2, while placing buffer 3 into use
+ * 
+ * Replaces pairs of plus, "++", with cheverons, "^".
+ ***************************************/
+char *get_buff_2(){
+    pthread_mutex_lock(&mutex_2);
+    while(count_2 == 0){ // If buffer_1 is empty, wait for data to be available
+        pthread_cond_wait(&full_2, &mutex_2);
+    }
+
+    char *line = buffer_2[cond_idx_2];
+    cond_idx_2 = (cond_idx_2 + 1) % BUFFER_SIZE;
+    count_2--;
+    pthread_mutex_unlock(&mutex_2);
+    return line;
+}
+
+
+void put_buff_3(char *line){
+    pthread_mutex_lock(&mutex_3);
+    strcpy(buffer_3[prod_idx_3], line);
+    prod_idx_3 = (prod_idx_3 + 1) % BUFFER_SIZE;
+    count_3++;
+    pthread_cond_signal(&full_3);
+    pthread_mutex_unlock(&mutex_3);
+}
+
+
+void *plus_sign_thread(void *arg) {
+    while (1) {
+        char *line = get_buff_2();
+        if(strncmp(line, "STOP\n", 5) == 0){
+            put_buff_3("STOP\n");
+            break;
         }
+        char processed_line[INPUT_LENGTH];
+        int j = 0;
 
-        for(int i = 0; line[i] != '\0'l; i++){
-            if(line[i] == '+' && line[i + 1] == '+'){
-                processed_line[j++] = '^';
-                i++;
-            }
-            else{
+        // Replace newlines with spaces in the line
+        for (int i = 0; line[i] != '\0'; i++) {
+            if (line[i] == '+' && line[i + 1] == '+') {
+                processed_line[j++] = '^';  // Replace with '^'
+                i++;  // Skip the next '+'
+            } else {
                 processed_line[j++] = line[i];
             }
         }
         processed_line[j] = '\0';
-
-        produce_output_buffer(output_buffer, processed_line);
+        put_buff_3(processed_line);
     }
 
     return NULL;
@@ -197,29 +187,71 @@ void *plus_sign_thread(void *arg){
 
 
 
-int main(){
-    Buffer input_buffer;
-    Buffer output_buffer;
+/**************************************
+ * THREAD 4:
+ * Uses data in buffer 3
+ * 
+ * Outputs the processed data in lines of 80 characters.
+****************/
+char *get_buff_3(){
+    pthread_mutex_lock(&mutex_3);
+    while(count_3 == 0){
+        pthread_cond_wait(&full_3, &mutex_3);
+    }
 
-    buffer_init(&input_buffer);
-    buffer_init(&output_buffer);
+    char *line = buffer_3[cond_idx_3];
+    cond_idx_3 = (cond_idx_3 + 1) % BUFFER_SIZE;
+    count_3--;
+    pthread_mutex_unlock(&mutex_3);
+    return line;
+}
 
 
-    pthread_t input_tid, line_separator_tid, plus_sign_tid, consumer_tid;
+void *output_thread(void *args) {
+    char output_buffer[INPUT_LENGTH * BUFFER_SIZE] = ""; // Buffer to accumulate processed output
+    int output_index = 0;
+    while (1) {
+        char *line = get_buff_3();
 
-    Buffer *args[2] = {&input_buffer, &output_buffer};
+        // Stop signal for output
+        if (strncmp(line, "STOP\n", 5) == 0) {
+            break;
+        }
+        strcat(output_buffer, line); // Append the line to the output buffer
+        output_index += strlen(line);
+        while (output_index >= OUTPUT_LENGTH) {
+            char output_line[OUTPUT_LENGTH + 1];
+            strncpy(output_line, output_buffer, OUTPUT_LENGTH);
+            output_line[OUTPUT_LENGTH] = '\0';
 
-    pthread_create(&input_tid, NULL, input_thread, &input_buffer);
-    pthread_create(&line_separator_tid, NULL, line_seperator_thread, args);
-    pthread_create(&plus_sign_tid, NULL, plus_sign_thread, args);
-    pthread_create(&consumer_tid, NULL, dummy_consumer, &output_buffer);
+            // Print formatted line
+            printf("%s\n", output_line);
+            memmove(output_buffer, output_buffer + OUTPUT_LENGTH, output_index - OUTPUT_LENGTH + 1);
+            output_index -= OUTPUT_LENGTH;
+        }
+    }
+    return NULL;
+}
 
 
 
+
+
+int main() {
+
+    // Create threads
+    pthread_t input_tid, line_sep_tid, plus_sign_tid, output_tid;
+
+    pthread_create(&input_tid, NULL, input_thread, NULL);
+    pthread_create(&line_sep_tid, NULL, line_seperator_thread, NULL);
+    pthread_create(&plus_sign_tid, NULL, plus_sign_thread, NULL);
+    pthread_create(&output_tid, NULL, output_thread, NULL);
+
+    // Wait for threads to finish
     pthread_join(input_tid, NULL);
-    pthread_join(line_separator_tid, NULL);
+    pthread_join(line_sep_tid, NULL);
     pthread_join(plus_sign_tid, NULL);
-    pthread_join(consumer_tid, NULL);
+    pthread_join(output_tid, NULL);
 
     return 0;
 }
